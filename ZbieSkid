@@ -1,794 +1,919 @@
-
-
-local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local CoreGui = game:GetService("CoreGui")
 
--- ==============================================================================
--- PHẦN 1: LOGIC KIỂM TRA KEY (GATEKEEPER)
--- ==============================================================================
+local player = Players.LocalPlayer
+local mouse = player:GetMouse() -- Thêm Mouse để check target
+local playerGui = player:WaitForChild("PlayerGui")
 
--- 1. Lấy Key người dùng đã nhập từ getgenv()
-local UserInputKey = getgenv().Key
-
--- Kiểm tra xem người dùng có nhập key chưa
-if not UserInputKey or UserInputKey == "" then
-    game.StarterGui:SetCore("SendNotification", {
-        Title = "Zbie Script",
-        Text = "Vui lòng nhập Key trước khi chạy script!",
-        Duration = 5
-    })
-    warn("⚠️ Lỗi: Chưa nhập Key!")
-    return -- Dừng script ngay lập tức
+-- --- XOÁ GUI CŨ ---
+for _, v in pairs(CoreGui:GetChildren()) do
+    if v.Name == "ZbieRemoteTool" then v:Destroy() end
+end
+if playerGui:FindFirstChild("ZbieRemoteTool") then
+    playerGui.ZbieRemoteTool:Destroy()
 end
 
--- 2. Hàm giải mã
-local function ZbieDecode(str)
-    local map = { ["%"]="Z", ["@"]="b", ["+"]="i", [")"]="e", ["&"]="D", ["L"]="p", ["$"]="T", ["P"]="r", ["!"]="a" }
-    local res = ""
-    for i = 1, #str do
-        local char = string.sub(str, i, i)
-        res = res .. (map[char] or char)
+-- --- CẤU HÌNH THEME ---
+local theme = {
+    bg = Color3.fromRGB(20, 20, 25),
+    header = Color3.fromRGB(30, 30, 35),
+    item = Color3.fromRGB(40, 40, 45),
+    accent = Color3.fromRGB(88, 166, 255),
+    text = Color3.fromRGB(255, 255, 255),
+    subtext = Color3.fromRGB(160, 160, 165),
+    red = Color3.fromRGB(255, 75, 75),
+    green = Color3.fromRGB(0, 220, 100),
+    yellow = Color3.fromRGB(255, 220, 0), -- Màu cho ClickDetector
+    purple = Color3.fromRGB(170, 0, 255),
+    purpleNeon = Color3.fromRGB(215, 100, 255)
+}
+
+-- --- HÀM SERIALIZER ---
+local function serialize(v)
+    if typeof(v) == "string" then
+        return '"' .. v .. '"'
+    elseif typeof(v) == "table" then
+        local str = "{"
+        local count = 0
+        for k, val in pairs(v) do
+            str = str .. tostring(k) .. "=" .. tostring(val) .. ", "
+            count = count + 1
+        end
+        return (count > 0 and str:sub(1, -3) or str) .. "}"
+    elseif typeof(v) == "Vector3" then
+        return string.format("Vector3.new(%.1f, %.1f, %.1f)", v.X, v.Y, v.Z)
+    elseif typeof(v) == "CFrame" then
+        return string.format("CFrame.new(%s)", tostring(v.Position))
+    elseif typeof(v) == "Instance" then
+        return v:GetFullName()
+    else
+        return tostring(v)
     end
-    return res
 end
 
--- 3. Tải database Key từ GitHub
-local url = "https://raw.githubusercontent.com/Dinhannguyen/checkremote-button/main/key.json?t="..tostring(os.time())
-local isValidKey = false
+-- --- FORMAT RÚT GỌN ---
+local function generateSmartFormat(remote, method, args)
+    local argsStr = ""
+    for i, v in ipairs(args) do
+        argsStr = argsStr .. serialize(v) .. (i < #args and ", " or "")
+    end
+    
+    -- Xử lý hiển thị Method cho đẹp
+    local shortMethod = "Fire"
+    if method == "InvokeServer" then shortMethod = "Invoke"
+    elseif method == "FireClickDetector" then shortMethod = "Click"
+    elseif method == "FireProximityPrompt" then shortMethod = "Prompt"
+    end
+    
+    return string.format("%s %s [%s]", remote.Name, shortMethod, argsStr)
+end
 
-local success, content = pcall(function()
-    return game:HttpGet(url, true)
+-- --- GUI SETUP ---
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "ZbieRemoteTool"
+if syn and syn.protect_gui then
+    syn.protect_gui(screenGui)
+    screenGui.Parent = CoreGui
+else
+    screenGui.Parent = playerGui
+end
+screenGui.ResetOnSpawn = false
+
+-- Notification Container (GIỮ NGUYÊN)
+local notifContainer = Instance.new("Frame")
+notifContainer.Name = "Notifications"
+notifContainer.Parent = screenGui
+notifContainer.Position = UDim2.new(1, -230, 1, -20)
+notifContainer.Size = UDim2.new(0, 220, 0, 0)
+notifContainer.AnchorPoint = Vector2.new(0, 1)
+notifContainer.BackgroundTransparency = 1
+
+local notifLayout = Instance.new("UIListLayout")
+notifLayout.Parent = notifContainer
+notifLayout.VerticalAlignment = Enum.VerticalAlignment.Bottom
+notifLayout.Padding = UDim.new(0, 8)
+
+local function notify(msg, color)
+    local frame = Instance.new("Frame")
+    frame.Parent = notifContainer
+    frame.BackgroundColor3 = theme.item
+    frame.Size = UDim2.new(1, 0, 0, 50)
+    frame.BackgroundTransparency = 0
+    
+    local corner = Instance.new("UICorner", frame)
+    corner.CornerRadius = UDim.new(0, 8)
+    
+    local stroke = Instance.new("UIStroke", frame)
+    stroke.Color = color or theme.accent
+    stroke.Thickness = 1.5
+    stroke.Transparency = 0.5
+    
+    local icon = Instance.new("TextLabel")
+    icon.Parent = frame
+    icon.Size = UDim2.new(0, 30, 1, 0)
+    icon.BackgroundTransparency = 1
+    icon.Text = "✓"
+    icon.TextColor3 = color or theme.accent
+    icon.Font = Enum.Font.GothamBold
+    icon.TextSize = 20
+    
+    local txt = Instance.new("TextLabel")
+    txt.Parent = frame
+    txt.Size = UDim2.new(1, -40, 1, 0)
+    txt.Position = UDim2.new(0, 35, 0, 0)
+    txt.BackgroundTransparency = 1
+    txt.Text = msg
+    txt.TextColor3 = theme.text
+    txt.Font = Enum.Font.GothamMedium
+    txt.TextSize = 13
+    txt.TextXAlignment = Enum.TextXAlignment.Left
+    txt.TextWrapped = true
+    
+    frame.Position = UDim2.new(0, 20, 0, 0)
+    frame.BackgroundTransparency = 1
+    txt.TextTransparency = 1
+    icon.TextTransparency = 1
+    
+    TweenService:Create(frame, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Position = UDim2.new(0, 0, 0, 0), BackgroundTransparency = 0}):Play()
+    TweenService:Create(txt, TweenInfo.new(0.4), {TextTransparency = 0}):Play()
+    TweenService:Create(icon, TweenInfo.new(0.4), {TextTransparency = 0}):Play()
+    
+    task.delay(3.5, function()
+        TweenService:Create(frame, TweenInfo.new(0.5), {Position = UDim2.new(0, 20, 0, 0), BackgroundTransparency = 1}):Play()
+        TweenService:Create(txt, TweenInfo.new(0.5), {TextTransparency = 1}):Play()
+        TweenService:Create(icon, TweenInfo.new(0.5), {TextTransparency = 1}):Play()
+        task.wait(0.5)
+        frame:Destroy()
+    end)
+end
+
+-- MAIN FRAME (GIỮ NGUYÊN)
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Parent = screenGui
+mainFrame.BackgroundColor3 = theme.bg
+mainFrame.Position = UDim2.new(0.5, -320, 0.5, -220)
+mainFrame.Size = UDim2.new(0, 640, 0, 440)
+mainFrame.ClipsDescendants = false
+mainFrame.BorderSizePixel = 0
+
+local mainCorner = Instance.new("UICorner", mainFrame)
+mainCorner.CornerRadius = UDim.new(0, 12)
+
+local mainStroke = Instance.new("UIStroke", mainFrame)
+mainStroke.Color = theme.purpleNeon
+mainStroke.Thickness = 2.5
+mainStroke.Transparency = 0
+mainStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+
+local strokeGradient = Instance.new("UIGradient")
+strokeGradient.Parent = mainStroke
+strokeGradient.Color = ColorSequence.new{
+    ColorSequenceKeypoint.new(0, theme.purple),
+    ColorSequenceKeypoint.new(0.5, theme.purpleNeon),
+    ColorSequenceKeypoint.new(1, theme.purple)
+}
+strokeGradient.Rotation = 45
+
+-- Header (GIỮ NGUYÊN)
+local header = Instance.new("Frame")
+header.Parent = mainFrame
+header.BackgroundColor3 = theme.header
+header.Size = UDim2.new(1, 0, 0, 50)
+header.BorderSizePixel = 0
+
+local headerCorner = Instance.new("UICorner", header)
+headerCorner.CornerRadius = UDim.new(0, 12)
+
+local headerBottom = Instance.new("Frame")
+headerBottom.Parent = header
+headerBottom.BackgroundColor3 = theme.header
+headerBottom.Position = UDim2.new(0, 0, 1, -12)
+headerBottom.Size = UDim2.new(1, 0, 0, 12)
+headerBottom.BorderSizePixel = 0
+
+local title = Instance.new("TextLabel")
+title.Parent = header
+title.Text = "⚡ ZBIE NGUYEN"
+title.Size = UDim2.new(0, 300, 1, 0)
+title.Position = UDim2.new(0, 20, 0, 0)
+title.BackgroundTransparency = 1
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.Font = Enum.Font.GothamBlack
+title.TextSize = 22
+title.TextXAlignment = Enum.TextXAlignment.Left
+
+local titleGradient = Instance.new("UIGradient")
+titleGradient.Parent = title
+titleGradient.Color = ColorSequence.new{
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
+    ColorSequenceKeypoint.new(1, theme.purpleNeon)
+}
+
+local version = Instance.new("TextLabel")
+version.Parent = header
+version.Text = "PREMIUM"
+version.Size = UDim2.new(0, 70, 0, 20)
+version.Position = UDim2.new(0, 230, 0, 15)
+version.BackgroundColor3 = theme.purple
+version.TextColor3 = theme.text
+version.Font = Enum.Font.GothamBold
+version.TextSize = 10
+Instance.new("UICorner", version).CornerRadius = UDim.new(0, 6)
+
+local function createHeaderButton(symbol, color, posX)
+    local btn = Instance.new("TextButton")
+    btn.Parent = header
+    btn.Size = UDim2.new(0, 40, 0, 40)
+    btn.Position = UDim2.new(1, posX, 0, 5)
+    btn.BackgroundColor3 = theme.item
+    btn.Text = ""
+    btn.AutoButtonColor = false
+    
+    local btnCorner = Instance.new("UICorner", btn)
+    btnCorner.CornerRadius = UDim.new(0, 8)
+    
+    local icon = Instance.new("TextLabel")
+    icon.Parent = btn
+    icon.Size = UDim2.new(1, 0, 1, 0)
+    icon.BackgroundTransparency = 1
+    icon.Text = symbol
+    icon.TextColor3 = color
+    icon.Font = Enum.Font.GothamBold
+    icon.TextSize = 18
+    
+    btn.MouseEnter:Connect(function()
+        TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = theme.header}):Play()
+        TweenService:Create(icon, TweenInfo.new(0.2), {TextSize = 20}):Play()
+    end)
+    btn.MouseLeave:Connect(function()
+        TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = theme.item}):Play()
+        TweenService:Create(icon, TweenInfo.new(0.2), {TextSize = 18}):Play()
+    end)
+    return btn
+end
+
+local btnClose = createHeaderButton("×", theme.red, -45)
+btnClose.MouseButton1Click:Connect(function()
+    TweenService:Create(mainFrame, TweenInfo.new(0.3), {Size = UDim2.new(0, 0, 0, 0)}):Play()
+    task.wait(0.3)
+    screenGui:Destroy()
 end)
 
-if success then
-    local successJson, json = pcall(function()
-        return HttpService:JSONDecode(content)
-    end)
-    
-    if successJson then
-        -- 4. So khớp Key
-        for _, encryptedKey in pairs(json) do
-            local realKey = ZbieDecode(encryptedKey)
-            -- So sánh (xóa khoảng trắng thừa)
-            if string.match(UserInputKey, "^%s*(.-)%s*$") == realKey then
-                isValidKey = true
-                break
-            end
-        end
-    else
-        warn("❌ Lỗi: Database Key bị hỏng (JSON Error).")
-    end
-else
-    warn("❌ Lỗi: Không thể kết nối đến server Key.")
-end
+local btnMin = createHeaderButton("−", theme.text, -90)
+local isMin = false
 
--- ==============================================================================
--- PHẦN 2: XỬ LÝ KẾT QUẢ VÀ CHẠY SCRIPT CHÍNH
--- ==============================================================================
-
-if isValidKey then
-    -- === KEY ĐÚNG: CHẠY SCRIPT CHÍNH ===
-    
-    print("✅ Key chính xác! Đang tải GUI...")
-    game.StarterGui:SetCore("SendNotification", {
-        Title = "Zbie Script",
-        Text = "Key đúng! Khởi chạy tool...",
-        Duration = 5
-    })
-    
-    -- [[ BẮT ĐẦU CODE GỐC CỦA abc.lua ]] --
-    
-    task.spawn(function() -- Bọc trong spawn để tránh lỗi làm dừng luồng chính
-        local ReplicatedStorage = game:GetService("ReplicatedStorage")
-        local TweenService = game:GetService("TweenService")
-        local UserInputService = game:GetService("UserInputService")
-        local CoreGui = game:GetService("CoreGui")
-
-        local player = Players.LocalPlayer
-        local playerGui = player:WaitForChild("PlayerGui")
-
-        -- --- XOÁ GUI CŨ ---
-        for _, v in pairs(CoreGui:GetChildren()) do
-            if v.Name == "ZbieRemoteTool" then v:Destroy() end
-        end
-        if playerGui:FindFirstChild("ZbieRemoteTool") then
-            playerGui.ZbieRemoteTool:Destroy()
-        end
-
-        -- --- CẤU HÌNH THEME ---
-        local theme = {
-            bg = Color3.fromRGB(20, 20, 25),
-            header = Color3.fromRGB(30, 30, 35),
-            item = Color3.fromRGB(40, 40, 45),
-            accent = Color3.fromRGB(88, 166, 255),
-            text = Color3.fromRGB(255, 255, 255),
-            subtext = Color3.fromRGB(160, 160, 165),
-            red = Color3.fromRGB(255, 75, 75),
-            green = Color3.fromRGB(0, 220, 100),
-            purple = Color3.fromRGB(170, 0, 255),
-            purpleNeon = Color3.fromRGB(215, 100, 255)
-        }
-
-        -- --- HÀM SERIALIZER ---
-        local function serialize(v)
-            if typeof(v) == "string" then
-                return '"' .. v .. '"'
-            elseif typeof(v) == "table" then
-                local str = "{"
-                local count = 0
-                for k, val in pairs(v) do
-                    str = str .. tostring(k) .. "=" .. tostring(val) .. ", "
-                    count = count + 1
-                end
-                return (count > 0 and str:sub(1, -3) or str) .. "}"
-            elseif typeof(v) == "Vector3" then
-                return string.format("Vector3.new(%.1f, %.1f, %.1f)", v.X, v.Y, v.Z)
-            elseif typeof(v) == "CFrame" then
-                return string.format("CFrame.new(%s)", tostring(v.Position))
-            elseif typeof(v) == "Instance" then
-                return v:GetFullName()
-            else
-                return tostring(v)
-            end
-        end
-
-        -- --- FORMAT RÚT GỌN ---
-        local function generateSmartFormat(remote, method, args)
-            local argsStr = ""
-            for i, v in ipairs(args) do
-                argsStr = argsStr .. serialize(v) .. (i < #args and ", " or "")
-            end
-            local shortMethod = (method == "InvokeServer") and "Invoke" or "Fire"
-            return string.format("%s %s [%s]", remote.Name, shortMethod, argsStr)
-        end
-
-        -- --- GUI SETUP ---
-        local screenGui = Instance.new("ScreenGui")
-        screenGui.Name = "ZbieRemoteTool"
-        if syn and syn.protect_gui then
-            syn.protect_gui(screenGui)
-            screenGui.Parent = CoreGui
-        else
-            screenGui.Parent = playerGui
-        end
-        screenGui.ResetOnSpawn = false
-
-        -- Notification Container
-        local notifContainer = Instance.new("Frame")
-        notifContainer.Name = "Notifications"
-        notifContainer.Parent = screenGui
-        notifContainer.Position = UDim2.new(1, -230, 1, -20)
-        notifContainer.Size = UDim2.new(0, 220, 0, 0)
-        notifContainer.AnchorPoint = Vector2.new(0, 1)
-        notifContainer.BackgroundTransparency = 1
-
-        local notifLayout = Instance.new("UIListLayout")
-        notifLayout.Parent = notifContainer
-        notifLayout.VerticalAlignment = Enum.VerticalAlignment.Bottom
-        notifLayout.Padding = UDim.new(0, 8)
-
-        -- HÀM NOTIFY
-        local function notify(msg, color)
-            local frame = Instance.new("Frame")
-            frame.Parent = notifContainer
-            frame.BackgroundColor3 = theme.item
-            frame.Size = UDim2.new(1, 0, 0, 50)
-            frame.BackgroundTransparency = 0
-            
-            local corner = Instance.new("UICorner", frame)
-            corner.CornerRadius = UDim.new(0, 8)
-            
-            local stroke = Instance.new("UIStroke", frame)
-            stroke.Color = color or theme.accent
-            stroke.Thickness = 1.5
-            stroke.Transparency = 0.5
-            
-            local icon = Instance.new("TextLabel")
-            icon.Parent = frame
-            icon.Size = UDim2.new(0, 30, 1, 0)
-            icon.BackgroundTransparency = 1
-            icon.Text = "✓"
-            icon.TextColor3 = color or theme.accent
-            icon.Font = Enum.Font.GothamBold
-            icon.TextSize = 20
-            
-            local txt = Instance.new("TextLabel")
-            txt.Parent = frame
-            txt.Size = UDim2.new(1, -40, 1, 0)
-            txt.Position = UDim2.new(0, 35, 0, 0)
-            txt.BackgroundTransparency = 1
-            txt.Text = msg
-            txt.TextColor3 = theme.text
-            txt.Font = Enum.Font.GothamMedium
-            txt.TextSize = 13
-            txt.TextXAlignment = Enum.TextXAlignment.Left
-            txt.TextWrapped = true
-            
-            -- Animation
-            frame.Position = UDim2.new(0, 20, 0, 0)
-            frame.BackgroundTransparency = 1
-            txt.TextTransparency = 1
-            icon.TextTransparency = 1
-            
-            TweenService:Create(frame, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Position = UDim2.new(0, 0, 0, 0), BackgroundTransparency = 0}):Play()
-            TweenService:Create(txt, TweenInfo.new(0.4), {TextTransparency = 0}):Play()
-            TweenService:Create(icon, TweenInfo.new(0.4), {TextTransparency = 0}):Play()
-            
-            task.delay(3.5, function()
-                TweenService:Create(frame, TweenInfo.new(0.5), {Position = UDim2.new(0, 20, 0, 0), BackgroundTransparency = 1}):Play()
-                TweenService:Create(txt, TweenInfo.new(0.5), {TextTransparency = 1}):Play()
-                TweenService:Create(icon, TweenInfo.new(0.5), {TextTransparency = 1}):Play()
-                task.wait(0.5)
-                frame:Destroy()
-            end)
-        end
-
-        -- MAIN FRAME
-        local mainFrame = Instance.new("Frame")
-        mainFrame.Name = "MainFrame"
-        mainFrame.Parent = screenGui
-        mainFrame.BackgroundColor3 = theme.bg
-        mainFrame.Position = UDim2.new(0.5, -320, 0.5, -220)
-        mainFrame.Size = UDim2.new(0, 640, 0, 440)
-        mainFrame.ClipsDescendants = false
-        mainFrame.BorderSizePixel = 0
-
-        local mainCorner = Instance.new("UICorner", mainFrame)
-        mainCorner.CornerRadius = UDim.new(0, 12)
-
-        -- VIỀN TÍM
-        local mainStroke = Instance.new("UIStroke", mainFrame)
-        mainStroke.Color = theme.purpleNeon
-        mainStroke.Thickness = 2.5
-        mainStroke.Transparency = 0
-        mainStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-
-        local strokeGradient = Instance.new("UIGradient")
-        strokeGradient.Parent = mainStroke
-        strokeGradient.Color = ColorSequence.new{
-            ColorSequenceKeypoint.new(0, theme.purple),
-            ColorSequenceKeypoint.new(0.5, theme.purpleNeon),
-            ColorSequenceKeypoint.new(1, theme.purple)
-        }
-        strokeGradient.Rotation = 45
-
-        -- Header
-        local header = Instance.new("Frame")
-        header.Parent = mainFrame
-        header.BackgroundColor3 = theme.header
-        header.Size = UDim2.new(1, 0, 0, 50)
-        header.BorderSizePixel = 0
-
-        local headerCorner = Instance.new("UICorner", header)
-        headerCorner.CornerRadius = UDim.new(0, 12)
-
-        local headerBottom = Instance.new("Frame")
-        headerBottom.Parent = header
-        headerBottom.BackgroundColor3 = theme.header
-        headerBottom.Position = UDim2.new(0, 0, 1, -12)
-        headerBottom.Size = UDim2.new(1, 0, 0, 12)
-        headerBottom.BorderSizePixel = 0
-
-        -- TIÊU ĐỀ
-        local title = Instance.new("TextLabel")
-        title.Parent = header
-        title.Text = "⚡ ZBIE NGUYEN"
-        title.Size = UDim2.new(0, 300, 1, 0)
-        title.Position = UDim2.new(0, 20, 0, 0)
-        title.BackgroundTransparency = 1
-        title.TextColor3 = Color3.fromRGB(255, 255, 255)
-        title.Font = Enum.Font.GothamBlack
-        title.TextSize = 22
-        title.TextXAlignment = Enum.TextXAlignment.Left
-
-        local titleGradient = Instance.new("UIGradient")
-        titleGradient.Parent = title
-        titleGradient.Color = ColorSequence.new{
-            ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
-            ColorSequenceKeypoint.new(1, theme.purpleNeon)
-        }
-
-        local version = Instance.new("TextLabel")
-        version.Parent = header
-        version.Text = "PREMIUM"
-        version.Size = UDim2.new(0, 70, 0, 20)
-        version.Position = UDim2.new(0, 230, 0, 15)
-        version.BackgroundColor3 = theme.purple
-        version.TextColor3 = theme.text
-        version.Font = Enum.Font.GothamBold
-        version.TextSize = 10
-        Instance.new("UICorner", version).CornerRadius = UDim.new(0, 6)
-
-        -- BUTTONS HEADER
-        local function createHeaderButton(symbol, color, posX)
-            local btn = Instance.new("TextButton")
-            btn.Parent = header
-            btn.Size = UDim2.new(0, 40, 0, 40)
-            btn.Position = UDim2.new(1, posX, 0, 5)
-            btn.BackgroundColor3 = theme.item
-            btn.Text = ""
-            btn.AutoButtonColor = false
-            
-            local btnCorner = Instance.new("UICorner", btn)
-            btnCorner.CornerRadius = UDim.new(0, 8)
-            
-            local icon = Instance.new("TextLabel")
-            icon.Parent = btn
-            icon.Size = UDim2.new(1, 0, 1, 0)
-            icon.BackgroundTransparency = 1
-            icon.Text = symbol
-            icon.TextColor3 = color
-            icon.Font = Enum.Font.GothamBold
-            icon.TextSize = 18
-            
-            btn.MouseEnter:Connect(function()
-                TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = theme.header}):Play()
-                TweenService:Create(icon, TweenInfo.new(0.2), {TextSize = 20}):Play()
-            end)
-            btn.MouseLeave:Connect(function()
-                TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = theme.item}):Play()
-                TweenService:Create(icon, TweenInfo.new(0.2), {TextSize = 18}):Play()
-            end)
-            return btn
-        end
-
-        local btnClose = createHeaderButton("×", theme.red, -45)
-        btnClose.MouseButton1Click:Connect(function()
-            TweenService:Create(mainFrame, TweenInfo.new(0.3), {Size = UDim2.new(0, 0, 0, 0)}):Play()
-            task.wait(0.3)
-            screenGui:Destroy()
-        end)
-
-        local btnMin = createHeaderButton("−", theme.text, -90)
-        local isMin = false
-        local minimizedCircle = nil
-
-        btnMin.MouseButton1Click:Connect(function()
-            isMin = not isMin
-            if isMin then
-                local circle = Instance.new("ImageButton")
-                circle.Name = "MinCircle"
-                circle.Parent = screenGui
-                circle.BackgroundColor3 = theme.bg
-                circle.Size = UDim2.new(0, 60, 0, 60)
-                circle.Position = UDim2.new(1, -80, 0, 50)
-                circle.Image = "rbxassetid://102837737528954"
-                
-                local cc = Instance.new("UICorner", circle)
-                cc.CornerRadius = UDim.new(1, 0)
-                
-                local cs = Instance.new("UIStroke", circle)
-                cs.Color = theme.purpleNeon
-                cs.Thickness = 2
-                
-                local dragging, dragStart, startPos
-                circle.InputBegan:Connect(function(inp)
-                    if inp.UserInputType == Enum.UserInputType.MouseButton1 then
-                        dragging = true
-                        dragStart = inp.Position
-                        startPos = circle.Position
-                    end
-                end)
-                circle.InputEnded:Connect(function(inp)
-                    if inp.UserInputType == Enum.UserInputType.MouseButton1 then
-                        dragging = false
-                        if (inp.Position - dragStart).Magnitude < 5 then
-                            isMin = false
-                            circle:Destroy()
-                            mainFrame.Visible = true
-                            mainFrame.Size = UDim2.new(0, 0, 0, 0)
-                            TweenService:Create(mainFrame, TweenInfo.new(0.4, Enum.EasingStyle.Back), {Size = UDim2.new(0, 640, 0, 440)}):Play()
-                        end
-                    end
-                end)
-                UserInputService.InputChanged:Connect(function(inp)
-                    if dragging and inp.UserInputType == Enum.UserInputType.MouseMovement then
-                        local delta = inp.Position - dragStart
-                        circle.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-                    end
-                end)
-                
-                TweenService:Create(mainFrame, TweenInfo.new(0.3), {Size = UDim2.new(0, 0, 0, 0)}):Play()
-                task.wait(0.3)
-                mainFrame.Visible = false
-            else
-                mainFrame.Visible = true
-            end
-        end)
-
-        -- Dragging GUI
-        local dragging, dragInput, dragStart, startPos
-        header.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 then
+btnMin.MouseButton1Click:Connect(function()
+    isMin = not isMin
+    if isMin then
+        local circle = Instance.new("ImageButton")
+        circle.Name = "MinCircle"
+        circle.Parent = screenGui
+        circle.BackgroundColor3 = theme.bg
+        circle.Size = UDim2.new(0, 60, 0, 60)
+        circle.Position = UDim2.new(1, -80, 0, 50)
+        circle.Image = "rbxassetid://102837737528954"
+        
+        local cc = Instance.new("UICorner", circle)
+        cc.CornerRadius = UDim.new(1, 0)
+        
+        local cs = Instance.new("UIStroke", circle)
+        cs.Color = theme.purpleNeon
+        cs.Thickness = 2
+        
+        local dragging, dragStart, startPos
+        circle.InputBegan:Connect(function(inp)
+            if inp.UserInputType == Enum.UserInputType.MouseButton1 then
                 dragging = true
-                dragStart = input.Position
-                startPos = mainFrame.Position
+                dragStart = inp.Position
+                startPos = circle.Position
             end
         end)
-        header.InputEnded:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
-        end)
-        UserInputService.InputChanged:Connect(function(input)
-            if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-                local delta = input.Position - dragStart
-                mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-            end
-        end)
-
-        -- Content
-        local content = Instance.new("Frame")
-        content.Parent = mainFrame
-        content.BackgroundTransparency = 1
-        content.Position = UDim2.new(0, 0, 0, 50)
-        content.Size = UDim2.new(1, 0, 1, -50)
-
-        local tabContainer = Instance.new("Frame")
-        tabContainer.Parent = content
-        tabContainer.BackgroundColor3 = theme.header
-        tabContainer.Size = UDim2.new(0, 140, 1, 0)
-        tabContainer.BorderSizePixel = 0
-
-        local pages = Instance.new("Frame")
-        pages.Parent = content
-        pages.BackgroundTransparency = 1
-        pages.Position = UDim2.new(0, 140, 0, 0)
-        pages.Size = UDim2.new(1, -140, 1, 0)
-
-        local tabs = {}
-        local function addTab(name, icon)
-            local btn = Instance.new("TextButton")
-            btn.Parent = tabContainer
-            btn.Size = UDim2.new(1, -10, 0, 45)
-            btn.Position = UDim2.new(0, 5, 0, 10 + #tabs * 55)
-            btn.BackgroundColor3 = theme.item
-            btn.Text = ""
-            btn.AutoButtonColor = false
-            
-            local btnCorner = Instance.new("UICorner", btn)
-            btnCorner.CornerRadius = UDim.new(0, 8)
-            
-            local iconLabel = Instance.new("TextLabel")
-            iconLabel.Parent = btn
-            iconLabel.Size = UDim2.new(0, 30, 1, 0)
-            iconLabel.Position = UDim2.new(0, 10, 0, 0)
-            iconLabel.BackgroundTransparency = 1
-            iconLabel.Text = icon
-            iconLabel.TextColor3 = theme.subtext
-            iconLabel.Font = Enum.Font.GothamBold
-            iconLabel.TextSize = 18
-            
-            local label = Instance.new("TextLabel")
-            label.Parent = btn
-            label.Size = UDim2.new(1, -45, 1, 0)
-            label.Position = UDim2.new(0, 40, 0, 0)
-            label.BackgroundTransparency = 1
-            label.Text = name
-            label.TextColor3 = theme.subtext
-            label.Font = Enum.Font.GothamSemibold
-            label.TextSize = 13
-            label.TextXAlignment = Enum.TextXAlignment.Left
-            
-            local page = Instance.new("Frame")
-            page.Parent = pages
-            page.Size = UDim2.new(1, 0, 1, 0)
-            page.BackgroundTransparency = 1
-            page.Visible = false
-            
-            btn.MouseButton1Click:Connect(function()
-                for _, t in pairs(tabs) do
-                    t.page.Visible = false
-                    TweenService:Create(t.btn, TweenInfo.new(0.2), {BackgroundColor3 = theme.item}):Play()
-                    t.label.TextColor3 = theme.subtext
-                    t.icon.TextColor3 = theme.subtext
+        circle.InputEnded:Connect(function(inp)
+            if inp.UserInputType == Enum.UserInputType.MouseButton1 then
+                dragging = false
+                if (inp.Position - dragStart).Magnitude < 5 then
+                     isMin = false
+                     circle:Destroy()
+                     mainFrame.Visible = true
+                     mainFrame.Size = UDim2.new(0, 0, 0, 0)
+                     TweenService:Create(mainFrame, TweenInfo.new(0.4, Enum.EasingStyle.Back), {Size = UDim2.new(0, 640, 0, 440)}):Play()
                 end
-                page.Visible = true
-                TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = theme.purple}):Play()
-                label.TextColor3 = theme.text
-                iconLabel.TextColor3 = theme.text
-            end)
-            
-            table.insert(tabs, {btn = btn, page = page, label = label, icon = iconLabel})
-            return page
+            end
+        end)
+        UserInputService.InputChanged:Connect(function(inp)
+             if dragging and inp.UserInputType == Enum.UserInputType.MouseMovement then
+                local delta = inp.Position - dragStart
+                circle.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+             end
+        end)
+        
+        TweenService:Create(mainFrame, TweenInfo.new(0.3), {Size = UDim2.new(0, 0, 0, 0)}):Play()
+        task.wait(0.3)
+        mainFrame.Visible = false
+    else
+        mainFrame.Visible = true
+    end
+end)
+
+local dragging, dragInput, dragStart, startPos
+header.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true
+        dragStart = input.Position
+        startPos = mainFrame.Position
+    end
+end)
+header.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+        local delta = input.Position - dragStart
+        mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
+
+-- Content
+local content = Instance.new("Frame")
+content.Parent = mainFrame
+content.BackgroundTransparency = 1
+content.Position = UDim2.new(0, 0, 0, 50)
+content.Size = UDim2.new(1, 0, 1, -50)
+
+local tabContainer = Instance.new("Frame")
+tabContainer.Parent = content
+tabContainer.BackgroundColor3 = theme.header
+tabContainer.Size = UDim2.new(0, 140, 1, 0)
+tabContainer.BorderSizePixel = 0
+
+local pages = Instance.new("Frame")
+pages.Parent = content
+pages.BackgroundTransparency = 1
+pages.Position = UDim2.new(0, 140, 0, 0)
+pages.Size = UDim2.new(1, -140, 1, 0)
+
+local tabs = {}
+local function addTab(name, icon)
+    local btn = Instance.new("TextButton")
+    btn.Parent = tabContainer
+    btn.Size = UDim2.new(1, -10, 0, 45)
+    btn.Position = UDim2.new(0, 5, 0, 10 + #tabs * 55)
+    btn.BackgroundColor3 = theme.item
+    btn.Text = ""
+    btn.AutoButtonColor = false
+    
+    local btnCorner = Instance.new("UICorner", btn)
+    btnCorner.CornerRadius = UDim.new(0, 8)
+    
+    local iconLabel = Instance.new("TextLabel")
+    iconLabel.Parent = btn
+    iconLabel.Size = UDim2.new(0, 30, 1, 0)
+    iconLabel.Position = UDim2.new(0, 10, 0, 0)
+    iconLabel.BackgroundTransparency = 1
+    iconLabel.Text = icon
+    iconLabel.TextColor3 = theme.subtext
+    iconLabel.Font = Enum.Font.GothamBold
+    iconLabel.TextSize = 18
+    
+    local label = Instance.new("TextLabel")
+    label.Parent = btn
+    label.Size = UDim2.new(1, -45, 1, 0)
+    label.Position = UDim2.new(0, 40, 0, 0)
+    label.BackgroundTransparency = 1
+    label.Text = name
+    label.TextColor3 = theme.subtext
+    label.Font = Enum.Font.GothamSemibold
+    label.TextSize = 13
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    
+    local page = Instance.new("Frame")
+    page.Parent = pages
+    page.Size = UDim2.new(1, 0, 1, 0)
+    page.BackgroundTransparency = 1
+    page.Visible = false
+    
+    btn.MouseButton1Click:Connect(function()
+        for _, t in pairs(tabs) do
+            t.page.Visible = false
+            TweenService:Create(t.btn, TweenInfo.new(0.2), {BackgroundColor3 = theme.item}):Play()
+            t.label.TextColor3 = theme.subtext
+            t.icon.TextColor3 = theme.subtext
         end
-
-        -- === TAB 1: LOGGER ===
-        local pLog = addTab("Logger", "📋")
-        local isSpying = false
-
-        local function createButton(parent, text, color, pos, callback)
-            local btn = Instance.new("TextButton")
-            btn.Parent = parent
-            btn.Size = UDim2.new(0, 90, 0, 32)
-            btn.Position = pos
-            btn.BackgroundColor3 = color
-            btn.Text = text
-            btn.TextColor3 = theme.text
-            btn.Font = Enum.Font.GothamBold
-            btn.TextSize = 12
-            btn.AutoButtonColor = false
-            
-            local corner = Instance.new("UICorner", btn)
-            corner.CornerRadius = UDim.new(0, 8)
-            
-            btn.MouseEnter:Connect(function()
-                TweenService:Create(btn, TweenInfo.new(0.2), {Size = UDim2.new(0, 95, 0, 34)}):Play()
-            end)
-            btn.MouseLeave:Connect(function()
-                TweenService:Create(btn, TweenInfo.new(0.2), {Size = UDim2.new(0, 90, 0, 32)}):Play()
-            end)
-            btn.MouseButton1Click:Connect(callback)
-            return btn
-        end
-
-        -- LOGIC START/STOP
-        local btnSpy = createButton(pLog, "START", theme.green, UDim2.new(0, 15, 0, 15), function() end)
-
-        btnSpy.MouseButton1Click:Connect(function()
-            isSpying = not isSpying
-            if isSpying then
-                btnSpy.Text = "STOP"
-                TweenService:Create(btnSpy, TweenInfo.new(0.3), {BackgroundColor3 = theme.red}):Play()
-                notify("Logger đã bật", theme.green)
-            else
-                btnSpy.Text = "START"
-                TweenService:Create(btnSpy, TweenInfo.new(0.3), {BackgroundColor3 = theme.green}):Play()
-                notify("Logger đã tắt", theme.red)
-            end
-        end)
-
-        local btnClear = createButton(pLog, "CLEAR", theme.item, UDim2.new(0, 115, 0, 15), function()
-            local logScroll = pLog:FindFirstChild("LogScroll")
-            if logScroll then
-                for _, c in pairs(logScroll:GetChildren()) do
-                    if c:IsA("Frame") then c:Destroy() end
-                end
-                notify("Đã xóa log", theme.accent)
-            end
-        end)
-
-        local scroll = Instance.new("ScrollingFrame")
-        scroll.Name = "LogScroll"
-        scroll.Parent = pLog
-        scroll.Position = UDim2.new(0, 15, 0, 60)
-        scroll.Size = UDim2.new(1, -30, 1, -75)
-        scroll.BackgroundTransparency = 1
-        scroll.ScrollBarThickness = 4
-        scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-        scroll.ScrollBarImageColor3 = theme.purple
-
-        local scrollLayout = Instance.new("UIListLayout", scroll)
-        scrollLayout.Padding = UDim.new(0, 8)
-
-        local function addLogEntry(remote, method, args)
-            if not isSpying then return end
-            if remote.Parent == player.Character then return end
-            
-            local smartCode = generateSmartFormat(remote, method, args)
-            
-            local entry = Instance.new("Frame")
-            entry.Parent = scroll
-            entry.BackgroundColor3 = theme.item
-            entry.Size = UDim2.new(1, 0, 0, 0)
-            entry.AutomaticSize = Enum.AutomaticSize.Y
-            
-            Instance.new("UICorner", entry).CornerRadius = UDim.new(0, 8)
-            local entryStroke = Instance.new("UIStroke", entry)
-            entryStroke.Color = theme.purple
-            entryStroke.Thickness = 1
-            entryStroke.Transparency = 0.8
-            
-            local methodTag = Instance.new("Frame")
-            methodTag.Parent = entry
-            methodTag.Size = UDim2.new(0, 55, 0, 20)
-            methodTag.Position = UDim2.new(0, 8, 0, 8)
-            methodTag.BackgroundColor3 = method == "InvokeServer" and theme.accent or theme.green
-            Instance.new("UICorner", methodTag).CornerRadius = UDim.new(0, 6)
-            
-            local methodText = Instance.new("TextLabel")
-            methodText.Parent = methodTag
-            methodText.Size = UDim2.new(1, 0, 1, 0)
-            methodText.BackgroundTransparency = 1
-            methodText.Text = method:sub(1,4):upper()
-            methodText.TextColor3 = theme.text
-            methodText.Font = Enum.Font.GothamBold
-            methodText.TextSize = 10
-            
-            local txt = Instance.new("TextLabel")
-            txt.Parent = entry
-            txt.Text = remote.Name
-            txt.Size = UDim2.new(1, -140, 0, 28)
-            txt.Position = UDim2.new(0, 70, 0, 5)
-            txt.BackgroundTransparency = 1
-            txt.TextColor3 = theme.text
-            txt.Font = Enum.Font.GothamBold
-            txt.TextSize = 13
-            txt.TextXAlignment = Enum.TextXAlignment.Left
-            
-            local btnCopy = Instance.new("TextButton")
-            btnCopy.Parent = entry
-            btnCopy.Size = UDim2.new(0, 60, 0, 24)
-            btnCopy.Position = UDim2.new(1, -68, 0, 7)
-            btnCopy.BackgroundColor3 = theme.purple
-            btnCopy.Text = "COPY"
-            btnCopy.TextColor3 = theme.text
-            btnCopy.Font = Enum.Font.GothamBold
-            btnCopy.TextSize = 11
-            Instance.new("UICorner", btnCopy).CornerRadius = UDim.new(0, 6)
-            
-            btnCopy.MouseButton1Click:Connect(function()
-                if setclipboard then
-                    setclipboard(smartCode)
-                    notify("Đã copy code!", theme.green)
-                end
-            end)
-            
-            local detail = Instance.new("TextBox")
-            detail.Parent = entry
-            detail.Position = UDim2.new(0, 10, 0, 35)
-            detail.Size = UDim2.new(1, -20, 0, 0)
-            detail.AutomaticSize = Enum.AutomaticSize.Y
-            detail.BackgroundTransparency = 1
-            detail.Text = smartCode
-            detail.TextColor3 = theme.subtext
-            detail.Font = Enum.Font.Code
-            detail.TextSize = 11
-            detail.TextXAlignment = Enum.TextXAlignment.Left
-            detail.TextWrapped = true
-            detail.MultiLine = true
-            detail.TextEditable = false
-            detail.ClearTextOnFocus = false
-            
-            local spacer = Instance.new("Frame")
-            spacer.Parent = entry
-            spacer.Size = UDim2.new(1, 0, 0, 8)
-            spacer.Position = UDim2.new(0, 0, 1, 0)
-            spacer.BackgroundTransparency = 1
-        end
-
-        local mt = getrawmetatable(game)
-        local old = mt.__namecall
-        setreadonly(mt, false)
-        mt.__namecall = newcclosure(function(self, ...)
-            local method = getnamecallmethod()
-            local args = {...}
-            if (method == "FireServer" or method == "InvokeServer") and isSpying then
-                task.spawn(addLogEntry, self, method, args)
-            end
-            return old(self, ...)
-        end)
-        setreadonly(mt, true)
-
-        -- === TAB 2: EXECUTOR ===
-        local pExec = addTab("Executor", "⚡")
-
-        local execInput = Instance.new("TextBox")
-        execInput.Parent = pExec
-        execInput.Size = UDim2.new(1, -30, 0, 280)
-        execInput.Position = UDim2.new(0, 15, 0, 15)
-        execInput.BackgroundColor3 = theme.item
-        execInput.TextColor3 = theme.text
-        execInput.PlaceholderText = "-- Nhập code Remote:\nCommF_ Invoke [\"BIN ĐẸP TRAI\"]"
-        execInput.PlaceholderColor3 = theme.subtext
-        execInput.TextXAlignment = Enum.TextXAlignment.Left
-        execInput.TextYAlignment = Enum.TextYAlignment.Top
-        execInput.MultiLine = true
-        execInput.Font = Enum.Font.Code
-        execInput.TextSize = 12
-        execInput.ClearTextOnFocus = false
-
-        Instance.new("UICorner", execInput).CornerRadius = UDim.new(0, 8)
-        local inputStroke = Instance.new("UIStroke", execInput)
-        inputStroke.Color = theme.purple
-        inputStroke.Thickness = 1
-        inputStroke.Transparency = 0.8
-        local inputPadding = Instance.new("UIPadding", execInput)
-        inputPadding.PaddingLeft = UDim.new(0, 10)
-        inputPadding.PaddingTop = UDim.new(0, 10)
-        inputPadding.PaddingRight = UDim.new(0, 10)
-        inputPadding.PaddingBottom = UDim.new(0, 10)
-
-        local btnRun = Instance.new("TextButton")
-        btnRun.Parent = pExec
-        btnRun.Size = UDim2.new(1, -30, 0, 45)
-        btnRun.Position = UDim2.new(0, 15, 1, -60)
-        btnRun.BackgroundColor3 = theme.purple
-        btnRun.Text = "⚡ EXECUTE"
-        btnRun.TextColor3 = theme.text
-        btnRun.Font = Enum.Font.GothamBold
-        btnRun.TextSize = 14
-        btnRun.AutoButtonColor = false
-        Instance.new("UICorner", btnRun).CornerRadius = UDim.new(0, 8)
-
-        btnRun.MouseEnter:Connect(function()
-            TweenService:Create(btnRun, TweenInfo.new(0.2), {BackgroundColor3 = theme.purpleNeon}):Play()
-        end)
-        btnRun.MouseLeave:Connect(function()
-            TweenService:Create(btnRun, TweenInfo.new(0.2), {BackgroundColor3 = theme.purple}):Play()
-        end)
-
-        local function tryFindRemote(name)
-            local r = ReplicatedStorage:FindFirstChild(name)
-            if not r then pcall(function() r = ReplicatedStorage:WaitForChild(name, 1) end) end
-            if not r then r = ReplicatedStorage:FindFirstChild(name, true) end
-            if not r then r = workspace:FindFirstChild(name, true) end
-            return r
-        end
-
-        btnRun.MouseButton1Click:Connect(function()
-            local text = execInput.Text
-            if text == "" then notify("Vui lòng nhập code!", theme.red) return end
-            btnRun.Text = "⏳ PROCESSING..."
-            
-            local function executeLogic()
-                if text:find("game.") or text:find("GetService") then
-                    local f, err = loadstring(text)
-                    if f then f() return "Script Executed", true else return "Syntax Error: "..tostring(err), false end
-                end
-                local name, method, argsRaw = text:match("^%s*([%w_]+)%s+([%w_]+)%s+(%[.*%])%s*$")
-                if not name then return "Invalid Format", false end
-                local remote = tryFindRemote(name)
-                if not remote then return "Remote Not Found: " .. name, false end
-                local validLuaTable = argsRaw:gsub("%[", "{"):gsub("%]", "}")
-                local argsFunc = loadstring("return " .. validLuaTable)
-                if not argsFunc then return "Args Syntax Error", false end
-                local args = argsFunc()
-                if method:lower():find("invoke") then
-                    local result = {remote:InvokeServer(unpack(args))}
-                    return result, true
-                else
-                    remote:FireServer(unpack(args))
-                    return "FireServer Sent", true
-                end
-            end
-            
-            local success, result, isOk = pcall(executeLogic)
-            if success and isOk then
-                btnRun.Text = "✓ SUCCESS!"
-                TweenService:Create(btnRun, TweenInfo.new(0.3), {BackgroundColor3 = theme.green}):Play()
-                notify("Thành công! Check F9", theme.green)
-                
-                print("\n========================================")
-                print("[ZBIE TOOL] EXECUTION RESULT:")
-                if type(result) == "table" then
-                    for i, v in pairs(result) do
-                        print("   [" .. i .. "] ->", serialize(v))
-                    end
-                else
-                    print("   ->", tostring(result))
-                end
-                print("========================================\n")
-                
-            else
-                btnRun.Text = "✕ FAILED"
-                TweenService:Create(btnRun, TweenInfo.new(0.3), {BackgroundColor3 = theme.red}):Play()
-                notify("Lỗi: " .. tostring(result or "Unknown"), theme.red)
-                warn("[ZBIE TOOL] ERROR:", result)
-            end
-            task.delay(2, function()
-                btnRun.Text = "⚡ EXECUTE"
-                TweenService:Create(btnRun, TweenInfo.new(0.3), {BackgroundColor3 = theme.purple}):Play()
-            end)
-        end)
-
-        tabs[1].btn.MouseButton1Click:Fire()
-        mainFrame.Size = UDim2.new(0, 0, 0, 0)
-        TweenService:Create(mainFrame, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-            Size = UDim2.new(0, 640, 0, 440)
-        }):Play()
-        notify("Chào mừng Zbie Nguyen!", theme.purpleNeon)
+        page.Visible = true
+        TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = theme.purple}):Play()
+        label.TextColor3 = theme.text
+        iconLabel.TextColor3 = theme.text
     end)
-    -- [[ KẾT THÚC CODE CHÍNH ]] --
-
-else
-    -- === KEY SAI: THÔNG BÁO ===
-    warn("⛔ Key sai hoặc đã hết hạn!")
     
-    game.StarterGui:SetCore("SendNotification", {
-        Title = "Zbie Script",
-        Text = "Key sai! Vui lòng kiểm tra lại.",
-        Duration = 5
-    })
-    
-    -- Tùy chọn: Kick người chơi
-    -- Players.LocalPlayer:Kick("Sai Key! Vui lòng lấy Key mới.")
+    table.insert(tabs, {btn = btn, page = page, label = label, icon = iconLabel})
+    return page
 end
+
+-- === TAB 1: LOGGER ===
+local pLog = addTab("Logger", "📋")
+local isSpying = false
+
+local function createButton(parent, text, color, pos, callback)
+    local btn = Instance.new("TextButton")
+    btn.Parent = parent
+    btn.Size = UDim2.new(0, 90, 0, 32)
+    btn.Position = pos
+    btn.BackgroundColor3 = color
+    btn.Text = text
+    btn.TextColor3 = theme.text
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 12
+    btn.AutoButtonColor = false
+    
+    local corner = Instance.new("UICorner", btn)
+    corner.CornerRadius = UDim.new(0, 8)
+    
+    btn.MouseEnter:Connect(function()
+        TweenService:Create(btn, TweenInfo.new(0.2), {Size = UDim2.new(0, 95, 0, 34)}):Play()
+    end)
+    btn.MouseLeave:Connect(function()
+        TweenService:Create(btn, TweenInfo.new(0.2), {Size = UDim2.new(0, 90, 0, 32)}):Play()
+    end)
+    btn.MouseButton1Click:Connect(callback)
+    return btn
+end
+
+-- LOGIC START/STOP
+local btnSpy = createButton(pLog, "START", theme.green, UDim2.new(0, 15, 0, 15), function() end)
+
+btnSpy.MouseButton1Click:Connect(function()
+    isSpying = not isSpying
+    if isSpying then
+        btnSpy.Text = "STOP"
+        TweenService:Create(btnSpy, TweenInfo.new(0.3), {BackgroundColor3 = theme.red}):Play()
+        notify("Logger đã bật (Remote + Click)", theme.green)
+    else
+        btnSpy.Text = "START"
+        TweenService:Create(btnSpy, TweenInfo.new(0.3), {BackgroundColor3 = theme.green}):Play()
+        notify("Logger đã tắt", theme.red)
+    end
+end)
+
+local btnClear = createButton(pLog, "CLEAR", theme.item, UDim2.new(0, 115, 0, 15), function()
+    local logScroll = pLog:FindFirstChild("LogScroll")
+    if logScroll then
+        for _, c in pairs(logScroll:GetChildren()) do
+            if c:IsA("Frame") then c:Destroy() end
+        end
+        notify("Đã xóa log", theme.accent)
+    end
+end)
+
+local scroll = Instance.new("ScrollingFrame")
+scroll.Name = "LogScroll"
+scroll.Parent = pLog
+scroll.Position = UDim2.new(0, 15, 0, 60)
+scroll.Size = UDim2.new(1, -30, 1, -75)
+scroll.BackgroundTransparency = 1
+scroll.ScrollBarThickness = 4
+scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+scroll.ScrollBarImageColor3 = theme.purple
+
+local scrollLayout = Instance.new("UIListLayout", scroll)
+scrollLayout.Padding = UDim.new(0, 8)
+
+-- HÀM ADD LOG (CẬP NHẬT GIAO DIỆN CHO CLICK)
+local function addLogEntry(remote, method, args)
+    if not isSpying then return end
+    if typeof(remote) == "Instance" and remote.Parent == player.Character then return end
+    
+    -- Tạo mã copy code thông minh
+    local copyCode = ""
+    local displayCode = ""
+    
+    local function safeFullName(obj)
+    local path = {}
+    local current = obj
+    while current and current ~= game do
+        local name = current.Name
+        if string.find(name, " ") or string.find(name, "%-") or string.find(name, "%.") then
+            name = string.format('["%s"]', name)
+        end
+        table.insert(path, 1, name)
+        current = current.Parent
+    end
+
+    local result = table.concat(path, ".")
+    result = result:gsub("%.%[", "[") -- xoá dấu . thừa trước ["..."]
+    return result
+end
+
+
+if method == "FireClickDetector" then
+    local full = safeFullName(remote)
+    copyCode = full .. " FireClickDetector []"
+    displayCode = full
+elseif method == "FireProximityPrompt" then
+    local full = safeFullName(remote)
+    copyCode = full .. " FireProximityPrompt []"
+    displayCode = full
+
+    elseif method == "FireProximityPrompt" then
+        copyCode = remote:GetFullName() .. " FireProximityPrompt []"
+        displayCode = remote:GetFullName()
+    else
+        copyCode = generateSmartFormat(remote, method, args)
+        displayCode = copyCode
+    end
+    
+    local entry = Instance.new("Frame")
+    entry.Parent = scroll
+    entry.BackgroundColor3 = theme.item
+    entry.Size = UDim2.new(1, 0, 0, 0)
+    entry.AutomaticSize = Enum.AutomaticSize.Y
+    
+    Instance.new("UICorner", entry).CornerRadius = UDim.new(0, 8)
+    local entryStroke = Instance.new("UIStroke", entry)
+    entryStroke.Color = theme.purple
+    entryStroke.Thickness = 1
+    entryStroke.Transparency = 0.8
+    
+    -- Tag Method
+    local methodColor = theme.green
+    if method == "InvokeServer" then methodColor = theme.accent 
+    elseif method == "FireClickDetector" or method == "FireProximityPrompt" then methodColor = theme.yellow
+    end
+    
+    local methodTag = Instance.new("Frame")
+    methodTag.Parent = entry
+    methodTag.Size = UDim2.new(0, 55, 0, 20)
+    methodTag.Position = UDim2.new(0, 8, 0, 8)
+    methodTag.BackgroundColor3 = methodColor
+    Instance.new("UICorner", methodTag).CornerRadius = UDim.new(0, 6)
+    
+    local methodText = Instance.new("TextLabel")
+    methodText.Parent = methodTag
+    methodText.Size = UDim2.new(1, 0, 1, 0)
+    methodText.BackgroundTransparency = 1
+    local shortM = "FIRE"
+    if method == "InvokeServer" then shortM = "INVOKE" 
+    elseif method == "FireClickDetector" then shortM = "CLICK"
+    elseif method == "FireProximityPrompt" then shortM = "PROMPT"
+    end
+    methodText.Text = shortM
+    methodText.TextColor3 = Color3.new(0,0,0) -- Text đen cho dễ đọc trên nền sáng
+    if methodColor == theme.item then methodText.TextColor3 = theme.text end
+    methodText.Font = Enum.Font.GothamBold
+    methodText.TextSize = 9
+    
+    local txt = Instance.new("TextLabel")
+    txt.Parent = entry
+    txt.Text = remote.Name
+    txt.Size = UDim2.new(1, -140, 0, 28)
+    txt.Position = UDim2.new(0, 70, 0, 5)
+    txt.BackgroundTransparency = 1
+    txt.TextColor3 = theme.text
+    txt.Font = Enum.Font.GothamBold
+    txt.TextSize = 13
+    txt.TextXAlignment = Enum.TextXAlignment.Left
+    
+    local btnCopy = Instance.new("TextButton")
+    btnCopy.Parent = entry
+    btnCopy.Size = UDim2.new(0, 60, 0, 24)
+    btnCopy.Position = UDim2.new(1, -68, 0, 7)
+    btnCopy.BackgroundColor3 = theme.purple
+    btnCopy.Text = "COPY"
+    btnCopy.TextColor3 = theme.text
+    btnCopy.Font = Enum.Font.GothamBold
+    btnCopy.TextSize = 11
+    Instance.new("UICorner", btnCopy).CornerRadius = UDim.new(0, 6)
+    
+    btnCopy.MouseButton1Click:Connect(function()
+        if setclipboard then
+            setclipboard(copyCode)
+            notify("Đã copy code!", theme.green)
+        end
+    end)
+    
+    local detail = Instance.new("TextBox")
+    detail.Parent = entry
+    detail.Position = UDim2.new(0, 10, 0, 35)
+    detail.Size = UDim2.new(1, -20, 0, 0)
+    detail.AutomaticSize = Enum.AutomaticSize.Y
+    detail.BackgroundTransparency = 1
+    detail.Text = displayCode
+    detail.TextColor3 = theme.subtext
+    detail.Font = Enum.Font.Code
+    detail.TextSize = 11
+    detail.TextXAlignment = Enum.TextXAlignment.Left
+    detail.TextWrapped = true
+    detail.MultiLine = true
+    detail.TextEditable = false
+    detail.ClearTextOnFocus = false
+    
+    local spacer = Instance.new("Frame")
+    spacer.Parent = entry
+    spacer.Size = UDim2.new(1, 0, 0, 8)
+    spacer.Position = UDim2.new(0, 0, 1, 0)
+    spacer.BackgroundTransparency = 1
+end
+
+-- === LOGIC HOOK REMOTE (GIỮ NGUYÊN) ===
+local mt = getrawmetatable(game)
+local old = mt.__namecall
+setreadonly(mt, false)
+mt.__namecall = newcclosure(function(self, ...)
+    local method = getnamecallmethod()
+    local args = {...}
+    if (method == "FireServer" or method == "InvokeServer") and isSpying then
+        task.spawn(addLogEntry, self, method, args)
+    end
+    return old(self, ...)
+end)
+setreadonly(mt, true)
+
+-- === [MỚI] LOGIC BẮT CLICKDETECTOR & PROXIMITYPROMPT ===
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if not isSpying then return end
+    -- Cho phép click xuyên qua GUI trong suốt hoặc click vào thế giới
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        local target = mouse.Target
+        if target then
+            -- 1. Tìm ClickDetector trong Target hoặc Parent của nó
+            local cd = target:FindFirstChildWhichIsA("ClickDetector")
+            if not cd and target.Parent then
+                cd = target.Parent:FindFirstChildWhichIsA("ClickDetector")
+            end
+            
+            -- 2. Tìm ProximityPrompt (Thường dùng cho nút E)
+            local pp = target:FindFirstChildWhichIsA("ProximityPrompt")
+            if not pp and target.Parent then
+                pp = target.Parent:FindFirstChildWhichIsA("ProximityPrompt")
+            end
+
+            -- 3. Log kết quả
+            if cd then
+                addLogEntry(cd, "FireClickDetector", {})
+            elseif pp then
+                addLogEntry(pp, "FireProximityPrompt", {})
+            end
+        end
+    end
+end)
+
+-- === TAB 2: EXECUTOR ===
+local pExec = addTab("Executor", "⚡")
+
+local execInput = Instance.new("TextBox")
+execInput.Parent = pExec
+execInput.Size = UDim2.new(1, -30, 0, 280)
+execInput.Position = UDim2.new(0, 15, 0, 15)
+execInput.BackgroundColor3 = theme.item
+execInput.TextColor3 = theme.text
+execInput.PlaceholderText = "-- Nhập code Remote/Click:\nWorkspace.Map...ClickDetector FireClickDetector []"
+execInput.PlaceholderColor3 = theme.subtext
+execInput.TextXAlignment = Enum.TextXAlignment.Left
+execInput.TextYAlignment = Enum.TextYAlignment.Top
+execInput.MultiLine = true
+execInput.Font = Enum.Font.Code
+execInput.TextSize = 12
+execInput.ClearTextOnFocus = false
+
+Instance.new("UICorner", execInput).CornerRadius = UDim.new(0, 8)
+local inputStroke = Instance.new("UIStroke", execInput)
+inputStroke.Color = theme.purple
+inputStroke.Thickness = 1
+inputStroke.Transparency = 0.8
+local inputPadding = Instance.new("UIPadding", execInput)
+inputPadding.PaddingLeft = UDim.new(0, 10)
+inputPadding.PaddingTop = UDim.new(0, 10)
+inputPadding.PaddingRight = UDim.new(0, 10)
+inputPadding.PaddingBottom = UDim.new(0, 10)
+
+local btnRun = Instance.new("TextButton")
+btnRun.Parent = pExec
+btnRun.Size = UDim2.new(1, -30, 0, 45)
+btnRun.Position = UDim2.new(0, 15, 1, -60)
+btnRun.BackgroundColor3 = theme.purple
+btnRun.Text = "⚡ EXECUTE"
+btnRun.TextColor3 = theme.text
+btnRun.Font = Enum.Font.GothamBold
+btnRun.TextSize = 14
+btnRun.AutoButtonColor = false
+Instance.new("UICorner", btnRun).CornerRadius = UDim.new(0, 8)
+
+btnRun.MouseEnter:Connect(function()
+    TweenService:Create(btnRun, TweenInfo.new(0.2), {BackgroundColor3 = theme.purpleNeon}):Play()
+end)
+btnRun.MouseLeave:Connect(function()
+    TweenService:Create(btnRun, TweenInfo.new(0.2), {BackgroundColor3 = theme.purple}):Play()
+end)
+
+local function tryFindRemote(name)
+    -- Hàm tìm instance thông minh, hỗ trợ cả workspace
+    local r = ReplicatedStorage:FindFirstChild(name)
+    if not r then pcall(function() r = ReplicatedStorage:WaitForChild(name, 1) end) end
+    if not r then r = ReplicatedStorage:FindFirstChild(name, true) end
+    if not r then r = workspace:FindFirstChild(name, true) end -- Tìm trong workspace cho ClickDetector
+    
+    -- Nếu đường dẫn đầy đủ (Vd: Workspace.Map.Button...)
+    if not r then
+        local success, obj = pcall(function() return loadstring("return " .. name)() end)
+        if success and obj then r = obj end
+    end
+    return r
+end
+
+btnRun.MouseButton1Click:Connect(function()
+    local text = execInput.Text
+    if text == "" then notify("Vui lòng nhập code!", theme.red) return end
+    btnRun.Text = "⏳ PROCESSING..."
+    
+    local function executeLogic()
+        -- 1. Nếu là script thường
+        if text:find("game.") or text:find("GetService") then
+            local f, err = loadstring(text)
+            if f then f() return "Script Executed", true else return "Syntax Error: "..tostring(err), false end
+        end
+
+        -- 2. Nếu là format của Tool (Name Method [Args])
+        local name, method, argsRaw = text:match("^%s*(.+)%s+([%w_]+)%s+(%[.*%])%s*$")
+        
+        if not name then return "Invalid Format", false end
+        
+        local remote = tryFindRemote(name)
+        if not remote then return "Instance Not Found: " .. name, false end
+        
+        local validLuaTable = argsRaw:gsub("%[", "{"):gsub("%]", "}")
+        local argsFunc = loadstring("return " .. validLuaTable)
+        if not argsFunc then return "Args Syntax Error", false end
+        local args = argsFunc()
+        
+        -- 3. Xử lý Execute tuỳ theo loại
+        if method == "FireClickDetector" then
+            if fireclickdetector then fireclickdetector(remote) else remote.FireClickDetector(remote) end -- Dự phòng
+            return "ClickDetector Fired", true
+        elseif method == "FireProximityPrompt" then
+            if fireproximityprompt then fireproximityprompt(remote) else remote:InputHoldBegin() task.wait(remote.HoldDuration) remote:InputHoldEnd() end
+            return "ProximityPrompt Fired", true
+        elseif method:lower():find("invoke") then
+            local result = {remote:InvokeServer(unpack(args))}
+            return result, true
+        else
+            remote:FireServer(unpack(args))
+            return "FireServer Sent", true
+        end
+    end
+    
+    local success, result, isOk = pcall(executeLogic)
+    if success and isOk then
+        btnRun.Text = "✓ SUCCESS!"
+        TweenService:Create(btnRun, TweenInfo.new(0.3), {BackgroundColor3 = theme.green}):Play()
+        notify("Thành công! Check F9", theme.green)
+        
+        print("\n========================================")
+        print("[ZBIE TOOL] EXECUTION RESULT:")
+        if type(result) == "table" then
+            for i, v in pairs(result) do
+                print("   [" .. i .. "] ->", serialize(v))
+            end
+        else
+            print("   ->", tostring(result))
+        end
+        print("========================================\n")
+        
+    else
+        btnRun.Text = "✕ FAILED"
+        TweenService:Create(btnRun, TweenInfo.new(0.3), {BackgroundColor3 = theme.red}):Play()
+        notify("Lỗi: " .. tostring(result or "Unknown"), theme.red)
+        warn("[ZBIE TOOL] ERROR:", result)
+    end
+    task.delay(2, function()
+        btnRun.Text = "⚡ EXECUTE"
+        TweenService:Create(btnRun, TweenInfo.new(0.3), {BackgroundColor3 = theme.purple}):Play()
+    end)
+end)
+
+-- === TAB 3: PLAYER ===
+local pPlayer = addTab("Player", "👥")
+
+local RunService = game:GetService("RunService") -- 
+
+-- Giá trị lưu trữ
+local cframeSpeedValue = 0 -- Mặc định là 0 (Tắt CFrame Speed)
+local jumpValue = 50
+local speedConnection = nil
+
+-- Hàm xử lý CFrame Speed (Lấy từ logic File A) 
+local function updateSpeedLoop()
+    -- Ngắt kết nối cũ nếu có để tránh chồng chéo
+    if speedConnection then 
+        speedConnection:Disconnect() 
+        speedConnection = nil
+    end
+
+    -- Tạo vòng lặp mới
+    speedConnection = RunService.Heartbeat:Connect(function(deltaTime)
+        local char = player.Character
+        local hum = char and char:FindFirstChild("Humanoid")
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+
+        -- Chỉ chạy khi nhân vật đang di chuyển và Speed > 0
+        if char and hum and root and hum.MoveDirection.Magnitude > 0 and cframeSpeedValue > 0 then
+            -- Tính toán vector di chuyển dựa trên hướng nhìn và tốc độ [cite: 7]
+            -- Logic: MoveDirection * (Speed / 100) * 50 * deltaTime
+            local speedMultiplier = cframeSpeedValue / 100
+            local moveVector = hum.MoveDirection * speedMultiplier * 50 * deltaTime
+            
+            -- Dịch chuyển nhân vật [cite: 8]
+            root.CFrame = root.CFrame + moveVector
+        end
+    end)
+end
+
+-- Hàm cập nhật Jump (Giữ nguyên logic set JumpPower vì ít bị chặn hơn)
+local function updateJump()
+    local char = player.Character
+    if char and char:FindFirstChild("Humanoid") then
+        char.Humanoid.JumpPower = jumpValue
+    end
+end
+
+-- Khi nhân vật hồi sinh, kích hoạt lại loop
+player.CharacterAdded:Connect(function(char)
+    task.wait(0.5)
+    updateJump()
+    updateSpeedLoop() -- Kích hoạt lại vòng lặp CFrame 
+end)
+
+-- Hàm tạo slider / textbox (Giữ nguyên UI của bạn)
+local function createPlayerSlider(labelText, defaultVal, callback)
+    local frame = Instance.new("Frame")
+    frame.Parent = pPlayer
+    frame.Size = UDim2.new(1, -30, 0, 50)
+    frame.Position = UDim2.new(0, 15, 0, (#pPlayer:GetChildren()-1) * 60)
+    frame.BackgroundColor3 = theme.item
+    frame.ClipsDescendants = true
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+
+    local label = Instance.new("TextLabel")
+    frame.Parent = pPlayer -- (Đã add ở trên, dòng này dư nhưng giữ logic cũ)
+    label.Parent = frame
+    label.Size = UDim2.new(1, -80, 1, 0)
+    label.Position = UDim2.new(0, 10, 0, 0)
+    label.BackgroundTransparency = 1
+    label.Text = labelText
+    label.Font = Enum.Font.GothamBold
+    label.TextColor3 = theme.text
+    label.TextSize = 14
+    label.TextXAlignment = Enum.TextXAlignment.Left
+
+    local input = Instance.new("TextBox")
+    input.Parent = frame
+    input.Size = UDim2.new(0, 60, 0, 28)
+    input.Position = UDim2.new(1, -70, 0, 11)
+    input.BackgroundColor3 = theme.purple
+    input.TextColor3 = theme.text
+    input.Font = Enum.Font.GothamBold
+    input.TextSize = 14
+    input.Text = tostring(defaultVal)
+    input.ClearTextOnFocus = false
+    Instance.new("UICorner", input).CornerRadius = UDim.new(0, 6)
+
+    input.FocusLost:Connect(function(enterPressed)
+        local val = tonumber(input.Text)
+        if val then
+            callback(val)
+            notify(labelText.." set to "..val, theme.green)
+        else
+            input.Text = tostring(defaultVal)
+        end
+    end)
+end
+
+-- === SỬA ĐỔI CHÍNH Ở ĐÂY ===
+
+-- Slider WalkSpeed (Giờ sẽ điều chỉnh CFrame Speed)
+-- Lưu ý: Nhập 0 để tắt, nhập 50-100 để chạy nhanh vừa, >100 để chạy siêu nhanh [cite: 9]
+createPlayerSlider("CFrame Speed (%)", 0, function(val)
+    cframeSpeedValue = val
+    updateSpeedLoop() -- Cập nhật lại vòng lặp mỗi khi đổi số
+end)
+
+-- Slider JumpPower
+createPlayerSlider("JumpPower", 50, function(val)
+    jumpValue = val
+    updateJump()
+end)
+
+-- Khởi chạy lần đầu
+updateSpeedLoop()
+
+
+
+
+tabs[1].btn.MouseButton1Click:Fire()
+mainFrame.Size = UDim2.new(0, 0, 0, 0)
+TweenService:Create(mainFrame, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+    Size = UDim2.new(0, 640, 0, 440)
+}):Play()
+notify("Chào mừng Zbie Nguyen!", theme.purpleNeon)
