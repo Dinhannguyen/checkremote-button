@@ -1,0 +1,95 @@
+local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+
+-- 1. Lấy Key người dùng đã nhập từ getgenv()
+local UserInputKey = getgenv().Key
+
+-- Kiểm tra xem người dùng có nhập key chưa
+if not UserInputKey or UserInputKey == "" then
+    game.StarterGui:SetCore("SendNotification", {
+        Title = "Zbie Script",
+        Text = "Vui lòng nhập Key trước khi chạy script!",
+        Duration = 5
+    })
+    warn("⚠️ Lỗi: Chưa nhập Key!")
+    return -- Dừng script ngay lập tức
+end
+
+-- 2. Hàm giải mã (Giữ nguyên từ code cũ của bạn)
+local function ZbieDecode(str)
+    local map = { ["%"]="Z", ["@"]="b", ["+"]="i", [")"]="e", ["&"]="D", ["L"]="p", ["$"]="T", ["P"]="r", ["!"]="a" }
+    local res = ""
+    for i = 1, #str do
+        local char = string.sub(str, i, i)
+        res = res .. (map[char] or char)
+    end
+    return res
+end
+
+-- 3. Tải database Key từ GitHub
+local url = "https://raw.githubusercontent.com/Dinhannguyen/checkremote-button/main/key.json?t="..tostring(os.time())
+local isValidKey = false
+
+local success, content = pcall(function()
+    return game:HttpGet(url, true)
+end)
+
+if success then
+    local successJson, json = pcall(function()
+        return HttpService:JSONDecode(content)
+    end)
+    
+    if successJson then
+        -- 4. So khớp Key
+        -- Duyệt qua danh sách key trên mạng, giải mã và so sánh với key người dùng nhập
+        for _, encryptedKey in pairs(json) do
+            local realKey = ZbieDecode(encryptedKey)
+            
+            -- So sánh (xóa khoảng trắng thừa để tránh lỗi nhập liệu)
+            if string.match(UserInputKey, "^%s*(.-)%s*$") == realKey then
+                isValidKey = true
+                break
+            end
+        end
+    else
+        warn("❌ Lỗi: Database Key bị hỏng (JSON Error).")
+    end
+else
+    warn("❌ Lỗi: Không thể kết nối đến server Key.")
+end
+
+-- 5. Xử lý kết quả (Đúng hoặc Sai)
+if isValidKey then
+    -- === KEY ĐÚNG: CHẠY SCRIPT CHÍNH Ở ĐÂY ===
+    
+    print("✅ Key chính xác!")
+    game.StarterGui:SetCore("SendNotification", {
+        Title = "Zbie Script",
+        Text = "Khởi chạy Zbie Script thành công!",
+        Duration = 5
+    })
+    
+    -- [[ BẮT ĐẦU CODE CHÍNH CỦA BẠN ]] --
+    
+    print("---------------------------------------")
+    print("    CHÀO MỪNG ĐẾN VỚI ZBIE SCRIPT      ")
+    print("---------------------------------------")
+    
+    -- Ví dụ chức năng:
+    -- loadstring(game:HttpGet("Link_Script_Hub_Cua_Ban"))()
+    
+    -- [[ KẾT THÚC CODE CHÍNH ]] --
+
+else
+    -- === KEY SAI: THÔNG BÁO VÀ KICK (Tùy chọn) ===
+    warn("⛔ Key sai hoặc đã hết hạn!")
+    
+    game.StarterGui:SetCore("SendNotification", {
+        Title = "Zbie Script",
+        Text = "Key sai! Vui lòng kiểm tra lại.",
+        Duration = 5
+    })
+    
+    -- Tùy chọn: Kick người chơi nếu sai key (Bỏ comment dòng dưới nếu muốn dùng)
+    -- Players.LocalPlayer:Kick("Sai Key! Vui lòng lấy Key mới tại Discord...")
+end
