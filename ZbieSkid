@@ -21,7 +21,7 @@ local function decryptZbieKey(cipherText)
         [")"] = "e",
         ["&"] = "D",
         ["L"] = "p",
-        ["$"] = "t",
+        ["$"] = "T",
         ["P"] = "r",
         ["!"] = "a"
     }
@@ -59,7 +59,6 @@ if userKey ~= serverKeyDecrypted then
     -- Code chạy khi SAI KEY
     StarterGui:SetCore("SendNotification", {
         Title = "❌ SAI KEY!";
-        Text = "Key bạn nhập: " .. userKey .. "\nKey đúng phải là: " .. serverKeyDecrypted; -- (Có thể ẩn dòng này nếu muốn bảo mật)
         Duration = 10;
     })
     warn("[ZBIE SECURITY] Key không hợp lệ! Vui lòng lấy key mới.")
