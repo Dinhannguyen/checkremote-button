@@ -1,11 +1,91 @@
+--[[
+    ============================================
+    HỆ THỐNG CHECK KEY ONLINE (ZBIE SECURITY)
+    ============================================
+]]
+
+local HttpService = game:GetService("HttpService")
+local StarterGui = game:GetService("StarterGui")
 local Players = game:GetService("Players")
+
+-- 1. Lấy Key người dùng nhập (Global Variable)
+local userKey = getgenv().Key or ""
+
+-- 2. Hàm giải mã (Custom Decrypt)
+-- Logic: Dựa trên mẫu bạn đưa: "%@+)&)L$P!+" => "ZbieDeptrai"
+local function decryptZbieKey(cipherText)
+    local map = {
+        ["%"] = "Z",
+        ["@"] = "b",
+        ["+"] = "i",
+        [")"] = "e",
+        ["&"] = "D",
+        ["L"] = "p",
+        ["$"] = "t",
+        ["P"] = "r",
+        ["!"] = "a"
+    }
+    
+    local plainText = ""
+    for i = 1, #cipherText do
+        local char = string.sub(cipherText, i, i)
+        -- Nếu ký tự có trong bảng map thì đổi, không thì giữ nguyên
+        plainText = plainText .. (map[char] or char)
+    end
+    return plainText
+end
+
+-- 3. Kết nối Server lấy Key
+local success, response = pcall(function()
+    return game:HttpGet("https://raw.githubusercontent.com/Dinhannguyen/checkremote-button/main/key.json")
+end)
+
+if not success then
+    StarterGui:SetCore("SendNotification", {
+        Title = "Server Error";
+        Text = "Không thể kết nối đến máy chủ lấy Key!";
+        Duration = 5;
+    })
+    return -- Dừng script
+end
+
+-- 4. Xử lý dữ liệu JSON
+local data = HttpService:JSONDecode(response)
+local serverKeyEncrypted = data.User_Vip -- Lấy chuỗi "%@+)&)L$P!+"
+local serverKeyDecrypted = decryptZbieKey(serverKeyEncrypted) -- Giải mã thành "ZbieDeptrai"
+
+-- 5. So sánh Key
+if userKey ~= serverKeyDecrypted then
+    -- Code chạy khi SAI KEY
+    StarterGui:SetCore("SendNotification", {
+        Title = "❌ SAI KEY!";
+        Text = "Key bạn nhập: " .. userKey .. "\nKey đúng phải là: " .. serverKeyDecrypted; -- (Có thể ẩn dòng này nếu muốn bảo mật)
+        Duration = 10;
+    })
+    warn("[ZBIE SECURITY] Key không hợp lệ! Vui lòng lấy key mới.")
+    return -- Dừng script, không chạy đoạn dưới
+else
+    -- Code chạy khi ĐÚNG KEY
+    StarterGui:SetCore("SendNotification", {
+        Title = "✅ KEY HỢP LỆ";
+        Text = "Chào mừng " .. Players.LocalPlayer.Name .. " quay lại!";
+        Duration = 5;
+    })
+end
+
+--[[
+    ============================================
+    PHẦN TOOL CHÍNH (CHỈ CHẠY KHI ĐÚNG KEY)
+    ============================================
+]]
+
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local CoreGui = game:GetService("CoreGui")
 
 local player = Players.LocalPlayer
-local mouse = player:GetMouse() -- Thêm Mouse để check target
+local mouse = player:GetMouse()
 local playerGui = player:WaitForChild("PlayerGui")
 
 -- --- XOÁ GUI CŨ ---
@@ -26,7 +106,7 @@ local theme = {
     subtext = Color3.fromRGB(160, 160, 165),
     red = Color3.fromRGB(255, 75, 75),
     green = Color3.fromRGB(0, 220, 100),
-    yellow = Color3.fromRGB(255, 220, 0), -- Màu cho ClickDetector
+    yellow = Color3.fromRGB(255, 220, 0),
     purple = Color3.fromRGB(170, 0, 255),
     purpleNeon = Color3.fromRGB(215, 100, 255)
 }
@@ -61,7 +141,6 @@ local function generateSmartFormat(remote, method, args)
         argsStr = argsStr .. serialize(v) .. (i < #args and ", " or "")
     end
     
-    -- Xử lý hiển thị Method cho đẹp
     local shortMethod = "Fire"
     if method == "InvokeServer" then shortMethod = "Invoke"
     elseif method == "FireClickDetector" then shortMethod = "Click"
@@ -82,7 +161,7 @@ else
 end
 screenGui.ResetOnSpawn = false
 
--- Notification Container (GIỮ NGUYÊN)
+-- Notification Container
 local notifContainer = Instance.new("Frame")
 notifContainer.Name = "Notifications"
 notifContainer.Parent = screenGui
@@ -150,7 +229,7 @@ local function notify(msg, color)
     end)
 end
 
--- MAIN FRAME (GIỮ NGUYÊN)
+-- MAIN FRAME
 local mainFrame = Instance.new("Frame")
 mainFrame.Name = "MainFrame"
 mainFrame.Parent = screenGui
@@ -178,7 +257,7 @@ strokeGradient.Color = ColorSequence.new{
 }
 strokeGradient.Rotation = 45
 
--- Header (GIỮ NGUYÊN)
+-- Header
 local header = Instance.new("Frame")
 header.Parent = mainFrame
 header.BackgroundColor3 = theme.header
@@ -481,7 +560,7 @@ scroll.ScrollBarImageColor3 = theme.purple
 local scrollLayout = Instance.new("UIListLayout", scroll)
 scrollLayout.Padding = UDim.new(0, 8)
 
--- HÀM ADD LOG (CẬP NHẬT GIAO DIỆN CHO CLICK)
+-- HÀM ADD LOG
 local function addLogEntry(remote, method, args)
     if not isSpying then return end
     if typeof(remote) == "Instance" and remote.Parent == player.Character then return end
@@ -491,35 +570,31 @@ local function addLogEntry(remote, method, args)
     local displayCode = ""
     
     local function safeFullName(obj)
-    local path = {}
-    local current = obj
-    while current and current ~= game do
-        local name = current.Name
-        if string.find(name, " ") or string.find(name, "%-") or string.find(name, "%.") then
-            name = string.format('["%s"]', name)
+        local path = {}
+        local current = obj
+        while current and current ~= game do
+            local name = current.Name
+            if string.find(name, " ") or string.find(name, "%-") or string.find(name, "%.") then
+                name = string.format('["%s"]', name)
+            end
+            table.insert(path, 1, name)
+            current = current.Parent
         end
-        table.insert(path, 1, name)
-        current = current.Parent
+
+        local result = table.concat(path, ".")
+        result = result:gsub("%.%[", "[")
+        return result
     end
 
-    local result = table.concat(path, ".")
-    result = result:gsub("%.%[", "[") -- xoá dấu . thừa trước ["..."]
-    return result
-end
 
-
-if method == "FireClickDetector" then
-    local full = safeFullName(remote)
-    copyCode = full .. " FireClickDetector []"
-    displayCode = full
-elseif method == "FireProximityPrompt" then
-    local full = safeFullName(remote)
-    copyCode = full .. " FireProximityPrompt []"
-    displayCode = full
-
+    if method == "FireClickDetector" then
+        local full = safeFullName(remote)
+        copyCode = full .. " FireClickDetector []"
+        displayCode = full
     elseif method == "FireProximityPrompt" then
-        copyCode = remote:GetFullName() .. " FireProximityPrompt []"
-        displayCode = remote:GetFullName()
+        local full = safeFullName(remote)
+        copyCode = full .. " FireProximityPrompt []"
+        displayCode = full
     else
         copyCode = generateSmartFormat(remote, method, args)
         displayCode = copyCode
@@ -560,7 +635,7 @@ elseif method == "FireProximityPrompt" then
     elseif method == "FireProximityPrompt" then shortM = "PROMPT"
     end
     methodText.Text = shortM
-    methodText.TextColor3 = Color3.new(0,0,0) -- Text đen cho dễ đọc trên nền sáng
+    methodText.TextColor3 = Color3.new(0,0,0)
     if methodColor == theme.item then methodText.TextColor3 = theme.text end
     methodText.Font = Enum.Font.GothamBold
     methodText.TextSize = 9
@@ -617,7 +692,7 @@ elseif method == "FireProximityPrompt" then
     spacer.BackgroundTransparency = 1
 end
 
--- === LOGIC HOOK REMOTE (GIỮ NGUYÊN) ===
+-- === LOGIC HOOK REMOTE ===
 local mt = getrawmetatable(game)
 local old = mt.__namecall
 setreadonly(mt, false)
@@ -631,26 +706,22 @@ mt.__namecall = newcclosure(function(self, ...)
 end)
 setreadonly(mt, true)
 
--- === [MỚI] LOGIC BẮT CLICKDETECTOR & PROXIMITYPROMPT ===
+-- === LOGIC BẮT CLICKDETECTOR & PROXIMITYPROMPT ===
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if not isSpying then return end
-    -- Cho phép click xuyên qua GUI trong suốt hoặc click vào thế giới
     if input.UserInputType == Enum.UserInputType.MouseButton1 then
         local target = mouse.Target
         if target then
-            -- 1. Tìm ClickDetector trong Target hoặc Parent của nó
             local cd = target:FindFirstChildWhichIsA("ClickDetector")
             if not cd and target.Parent then
                 cd = target.Parent:FindFirstChildWhichIsA("ClickDetector")
             end
             
-            -- 2. Tìm ProximityPrompt (Thường dùng cho nút E)
             local pp = target:FindFirstChildWhichIsA("ProximityPrompt")
             if not pp and target.Parent then
                 pp = target.Parent:FindFirstChildWhichIsA("ProximityPrompt")
             end
 
-            -- 3. Log kết quả
             if cd then
                 addLogEntry(cd, "FireClickDetector", {})
             elseif pp then
@@ -709,13 +780,11 @@ btnRun.MouseLeave:Connect(function()
 end)
 
 local function tryFindRemote(name)
-    -- Hàm tìm instance thông minh, hỗ trợ cả workspace
     local r = ReplicatedStorage:FindFirstChild(name)
     if not r then pcall(function() r = ReplicatedStorage:WaitForChild(name, 1) end) end
     if not r then r = ReplicatedStorage:FindFirstChild(name, true) end
-    if not r then r = workspace:FindFirstChild(name, true) end -- Tìm trong workspace cho ClickDetector
+    if not r then r = workspace:FindFirstChild(name, true) end
     
-    -- Nếu đường dẫn đầy đủ (Vd: Workspace.Map.Button...)
     if not r then
         local success, obj = pcall(function() return loadstring("return " .. name)() end)
         if success and obj then r = obj end
@@ -729,13 +798,11 @@ btnRun.MouseButton1Click:Connect(function()
     btnRun.Text = "⏳ PROCESSING..."
     
     local function executeLogic()
-        -- 1. Nếu là script thường
         if text:find("game.") or text:find("GetService") then
             local f, err = loadstring(text)
             if f then f() return "Script Executed", true else return "Syntax Error: "..tostring(err), false end
         end
 
-        -- 2. Nếu là format của Tool (Name Method [Args])
         local name, method, argsRaw = text:match("^%s*(.+)%s+([%w_]+)%s+(%[.*%])%s*$")
         
         if not name then return "Invalid Format", false end
@@ -748,9 +815,8 @@ btnRun.MouseButton1Click:Connect(function()
         if not argsFunc then return "Args Syntax Error", false end
         local args = argsFunc()
         
-        -- 3. Xử lý Execute tuỳ theo loại
         if method == "FireClickDetector" then
-            if fireclickdetector then fireclickdetector(remote) else remote.FireClickDetector(remote) end -- Dự phòng
+            if fireclickdetector then fireclickdetector(remote) else remote.FireClickDetector(remote) end
             return "ClickDetector Fired", true
         elseif method == "FireProximityPrompt" then
             if fireproximityprompt then fireproximityprompt(remote) else remote:InputHoldBegin() task.wait(remote.HoldDuration) remote:InputHoldEnd() end
@@ -796,41 +862,31 @@ end)
 -- === TAB 3: PLAYER ===
 local pPlayer = addTab("Player", "👥")
 
-local RunService = game:GetService("RunService") -- 
+local RunService = game:GetService("RunService") 
 
--- Giá trị lưu trữ
-local cframeSpeedValue = 0 -- Mặc định là 0 (Tắt CFrame Speed)
+local cframeSpeedValue = 0 
 local jumpValue = 50
 local speedConnection = nil
 
--- Hàm xử lý CFrame Speed (Lấy từ logic File A) 
 local function updateSpeedLoop()
-    -- Ngắt kết nối cũ nếu có để tránh chồng chéo
     if speedConnection then 
         speedConnection:Disconnect() 
         speedConnection = nil
     end
 
-    -- Tạo vòng lặp mới
     speedConnection = RunService.Heartbeat:Connect(function(deltaTime)
         local char = player.Character
         local hum = char and char:FindFirstChild("Humanoid")
         local root = char and char:FindFirstChild("HumanoidRootPart")
 
-        -- Chỉ chạy khi nhân vật đang di chuyển và Speed > 0
         if char and hum and root and hum.MoveDirection.Magnitude > 0 and cframeSpeedValue > 0 then
-            -- Tính toán vector di chuyển dựa trên hướng nhìn và tốc độ [cite: 7]
-            -- Logic: MoveDirection * (Speed / 100) * 50 * deltaTime
             local speedMultiplier = cframeSpeedValue / 100
             local moveVector = hum.MoveDirection * speedMultiplier * 50 * deltaTime
-            
-            -- Dịch chuyển nhân vật [cite: 8]
             root.CFrame = root.CFrame + moveVector
         end
     end)
 end
 
--- Hàm cập nhật Jump (Giữ nguyên logic set JumpPower vì ít bị chặn hơn)
 local function updateJump()
     local char = player.Character
     if char and char:FindFirstChild("Humanoid") then
@@ -838,14 +894,12 @@ local function updateJump()
     end
 end
 
--- Khi nhân vật hồi sinh, kích hoạt lại loop
 player.CharacterAdded:Connect(function(char)
     task.wait(0.5)
     updateJump()
-    updateSpeedLoop() -- Kích hoạt lại vòng lặp CFrame 
+    updateSpeedLoop()
 end)
 
--- Hàm tạo slider / textbox (Giữ nguyên UI của bạn)
 local function createPlayerSlider(labelText, defaultVal, callback)
     local frame = Instance.new("Frame")
     frame.Parent = pPlayer
@@ -856,7 +910,7 @@ local function createPlayerSlider(labelText, defaultVal, callback)
     Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
 
     local label = Instance.new("TextLabel")
-    frame.Parent = pPlayer -- (Đã add ở trên, dòng này dư nhưng giữ logic cũ)
+    frame.Parent = pPlayer
     label.Parent = frame
     label.Size = UDim2.new(1, -80, 1, 0)
     label.Position = UDim2.new(0, 10, 0, 0)
@@ -890,27 +944,19 @@ local function createPlayerSlider(labelText, defaultVal, callback)
     end)
 end
 
--- === SỬA ĐỔI CHÍNH Ở ĐÂY ===
-
--- Slider WalkSpeed (Giờ sẽ điều chỉnh CFrame Speed)
--- Lưu ý: Nhập 0 để tắt, nhập 50-100 để chạy nhanh vừa, >100 để chạy siêu nhanh [cite: 9]
 createPlayerSlider("CFrame Speed (%)", 0, function(val)
     cframeSpeedValue = val
-    updateSpeedLoop() -- Cập nhật lại vòng lặp mỗi khi đổi số
+    updateSpeedLoop()
 end)
 
--- Slider JumpPower
 createPlayerSlider("JumpPower", 50, function(val)
     jumpValue = val
     updateJump()
 end)
 
--- Khởi chạy lần đầu
 updateSpeedLoop()
 
-
-
-
+-- KHỞI CHẠY UI SAU KHI CHECK KEY XONG
 tabs[1].btn.MouseButton1Click:Fire()
 mainFrame.Size = UDim2.new(0, 0, 0, 0)
 TweenService:Create(mainFrame, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
