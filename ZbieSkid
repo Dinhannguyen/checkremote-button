@@ -1,92 +1,29 @@
 --[[
     ============================================
-    HỆ THỐNG CHECK KEY ONLINE (ZBIE SECURITY)
+    HỆ THỐNG CHECK KEY ONLINE (ĐÃ LOẠI BỎ KEY)
+    TOOL: ZBIE REMOTE SPY & EXECUTOR
     ============================================
 ]]
-
 
 local HttpService = game:GetService("HttpService")
 local StarterGui = game:GetService("StarterGui")
 local Players = game:GetService("Players")
-
--- 1. Lấy Key người dùng nhập (Global Variable)
-local userKey = getgenv().Key or ""
-
--- 2. Hàm giải mã (Custom Decrypt)
--- Logic: Dựa trên mẫu bạn đưa: "%@+)&)L$P!+" => "ZbieDeptrai"
-local function decryptZbieKey(cipherText)
-    local map = {
-        ["%"] = "Z",
-        ["@"] = "b",
-        ["+"] = "i",
-        [")"] = "e",
-        ["&"] = "D",
-        ["L"] = "p",
-        ["$"] = "T",
-        ["P"] = "r",
-        ["!"] = "a"
-    }
-    
-    local plainText = ""
-    for i = 1, #cipherText do
-        local char = string.sub(cipherText, i, i)
-        -- Nếu ký tự có trong bảng map thì đổi, không thì giữ nguyên
-        plainText = plainText .. (map[char] or char)
-    end
-    return plainText
-end
-
--- 3. Kết nối Server lấy Key
-local success, response = pcall(function()
-    return game:HttpGet("https://raw.githubusercontent.com/Dinhannguyen/checkremote-button/main/key.json")
-end)
-
-if not success then
-    StarterGui:SetCore("SendNotification", {
-        Title = "Server Error";
-        Text = "Không thể kết nối đến máy chủ lấy Key!";
-        Duration = 5;
-    })
-    return -- Dừng script
-end
-
--- 4. Xử lý dữ liệu JSON
-local data = HttpService:JSONDecode(response)
-local serverKeyEncrypted = data.User_Vip -- Lấy chuỗi "%@+)&)L$P!+"
-local serverKeyDecrypted = decryptZbieKey(serverKeyEncrypted) -- Giải mã thành "ZbieDeptrai"
-
--- 5. So sánh Key
-if userKey ~= serverKeyDecrypted then
-    -- Code chạy khi SAI KEY
-    StarterGui:SetCore("SendNotification", {
-        Title = "❌ SAI KEY!";
-        Duration = 10;
-    })
-    warn("[ZBIE SECURITY] Key không hợp lệ! Vui lòng lấy key mới.")
-    return -- Dừng script, không chạy đoạn dưới
-else
-    -- Code chạy khi ĐÚNG KEY
-    StarterGui:SetCore("SendNotification", {
-        Title = "✅ KEY HỢP LỆ";
-        Text = "Chào mừng " .. Players.LocalPlayer.Name .. " quay lại!";
-        Duration = 5;
-    })
-end
-
---[[
-    ============================================
-    PHẦN TOOL CHÍNH (CHỈ CHẠY KHI ĐÚNG KEY)
-    ============================================
-]]
-
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local CoreGui = game:GetService("CoreGui")
+local RunService = game:GetService("RunService")
 
 local player = Players.LocalPlayer
 local mouse = player:GetMouse()
 local playerGui = player:WaitForChild("PlayerGui")
+
+-- THÔNG BÁO CHÀO MỪNG
+StarterGui:SetCore("SendNotification", {
+    Title = "✅ NO KEY NEEDED";
+    Text = "Chào mừng " .. player.Name .. " - Script đã Bypass Key!";
+    Duration = 5;
+})
 
 -- --- XOÁ GUI CŨ ---
 for _, v in pairs(CoreGui:GetChildren()) do
@@ -294,11 +231,11 @@ titleGradient.Color = ColorSequence.new{
 
 local version = Instance.new("TextLabel")
 version.Parent = header
-version.Text = "PREMIUM"
+version.Text = "NO KEY"
 version.Size = UDim2.new(0, 70, 0, 20)
 version.Position = UDim2.new(0, 230, 0, 15)
-version.BackgroundColor3 = theme.purple
-version.TextColor3 = theme.text
+version.BackgroundColor3 = theme.green
+version.TextColor3 = theme.bg
 version.Font = Enum.Font.GothamBold
 version.TextSize = 10
 Instance.new("UICorner", version).CornerRadius = UDim.new(0, 6)
@@ -862,8 +799,6 @@ end)
 -- === TAB 3: PLAYER ===
 local pPlayer = addTab("Player", "👥")
 
-local RunService = game:GetService("RunService") 
-
 local cframeSpeedValue = 0 
 local jumpValue = 50
 local speedConnection = nil
@@ -956,10 +891,10 @@ end)
 
 updateSpeedLoop()
 
--- KHỞI CHẠY UI SAU KHI CHECK KEY XONG
+-- KHỞI CHẠY UI NGAY LẬP TỨC
 tabs[1].btn.MouseButton1Click:Fire()
 mainFrame.Size = UDim2.new(0, 0, 0, 0)
 TweenService:Create(mainFrame, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
     Size = UDim2.new(0, 640, 0, 440)
 }):Play()
-notify("Chào mừng Zbie Nguyen!", theme.purpleNeon)
+notify("Script Activated (No Key)", theme.purpleNeon)
